@@ -3,7 +3,7 @@ import type { Address } from "viem";
 import BTCClubABI from "./BTCClubABI.json";
 
 export const BTC_CLUB_CONTRACT_ADDRESS =
-  "0x422d4C354f7D49ab5A88Ca19695aD0F1eA03e8cb" as const satisfies Address;
+  "0x95f505c540cDE11B5F68B23DBd0A440e75170e80" as const satisfies Address;
 
 export const BTC_CLUB_CHAIN_ID = 8453 as const;
 

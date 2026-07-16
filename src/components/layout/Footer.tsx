@@ -18,7 +18,7 @@ export default function Footer() {
           <ul className="flex flex-wrap items-center justify-center gap-x-7 gap-y-3 text-xs sm:gap-x-8 sm:text-sm">
             <li>
               <a
-                href="https://basescan.org/address/0x422d4C354f7D49ab5A88Ca19695aD0F1eA03e8cb"
+                href="https://basescan.org/address/0x95f505c540cDE11B5F68B23DBd0A440e75170e80"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[#d8b15a] transition-all duration-300 hover:text-[#f5d98b] hover:drop-shadow-[0_0_6px_rgba(212,175,55,0.45)]"
