@@ -3,11 +3,129 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Image from "next/image";
-import { useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import MintPanel, {
   type RevealedCard,
 } from "@/components/mint/MintPanel";
+
+type RevealedCardImageProps = {
+  card: RevealedCard;
+};
+
+function getIpfsPath(uri: string): string | null {
+  if (uri.startsWith("ipfs://ipfs/")) {
+    return uri.slice("ipfs://ipfs/".length);
+  }
+
+  if (uri.startsWith("ipfs://")) {
+    return uri.slice("ipfs://".length);
+  }
+
+  const ipfsMarker = "/ipfs/";
+  const markerIndex = uri.indexOf(ipfsMarker);
+
+  if (markerIndex !== -1) {
+    return uri.slice(
+      markerIndex + ipfsMarker.length,
+    );
+  }
+
+  return null;
+}
+
+function createImageSources(uri: string): string[] {
+  const ipfsPath = getIpfsPath(uri);
+
+  if (!ipfsPath) {
+    return [uri];
+  }
+
+  const normalizedPath = ipfsPath.replace(
+    /^ipfs\//,
+    "",
+  );
+
+  const [cid, ...remainingParts] =
+    normalizedPath.split("/");
+
+  const remainingPath = remainingParts.join("/");
+
+  const subdomainGatewayUrl = remainingPath
+    ? `https://${cid}.ipfs.dweb.link/${remainingPath}`
+    : `https://${cid}.ipfs.dweb.link`;
+
+  return Array.from(
+    new Set([
+      `https://ipfs.io/ipfs/${normalizedPath}`,
+      `https://w3s.link/ipfs/${normalizedPath}`,
+      `https://gateway.pinata.cloud/ipfs/${normalizedPath}`,
+      subdomainGatewayUrl,
+    ]),
+  );
+}
+
+function RevealedCardImage({
+  card,
+}: RevealedCardImageProps) {
+  const imageSources = useMemo(
+    () => createImageSources(card.imageUrl),
+    [card.imageUrl],
+  );
+
+  const [sourceIndex, setSourceIndex] =
+    useState(0);
+
+  const [allSourcesFailed, setAllSourcesFailed] =
+    useState(false);
+
+  useEffect(() => {
+    setSourceIndex(0);
+    setAllSourcesFailed(false);
+  }, [card.imageUrl, card.tokenId]);
+
+  const handleImageError = () => {
+    setSourceIndex((currentIndex) => {
+      const nextIndex = currentIndex + 1;
+
+      if (nextIndex >= imageSources.length) {
+        setAllSourcesFailed(true);
+        return currentIndex;
+      }
+
+      return nextIndex;
+    });
+  };
+
+  if (allSourcesFailed) {
+    return (
+      <Image
+        src="/mint/mystery-card-master.png"
+        alt="BTC CLUB mystery collectible card"
+        fill
+        sizes="(max-width: 767px) 315px, (max-width: 1279px) 510px, 560px"
+        className="object-contain drop-shadow-[0_32px_64px_rgba(0,0,0,0.68)]"
+      />
+    );
+  }
+
+  return (
+    <img
+      key={`${card.tokenId}-${sourceIndex}`}
+      src={imageSources[sourceIndex]}
+      alt={
+        card.name ||
+        `BTC CLUB Card #${card.tokenId}`
+      }
+      onError={handleImageError}
+      className="absolute inset-0 h-full w-full object-contain drop-shadow-[0_32px_64px_rgba(0,0,0,0.68)]"
+    />
+  );
+}
 
 export default function Home() {
   const [revealedCard, setRevealedCard] =
@@ -140,13 +258,16 @@ export default function Home() {
 
             {/* Description */}
             <p className="mt-5 max-w-[600px] text-sm leading-6 text-white/64 sm:mt-6 sm:text-[15px] sm:leading-7 lg:text-base">
-              Mint a mystery collectible card from the official BTC CLUB
-              collection. Every confirmed mint reveals one of 139 premium card
-              designs.
+              Mint a mystery collectible card from
+              the official BTC CLUB collection.
+              Every confirmed mint reveals one of
+              139 premium card designs.
             </p>
 
             {/* Production mint panel */}
-            <MintPanel onReveal={setRevealedCard} />
+            <MintPanel
+              onReveal={setRevealedCard}
+            />
           </div>
 
           {/* Mystery / revealed card */}
@@ -169,13 +290,8 @@ export default function Home() {
               {/* Card */}
               <div className="relative aspect-square w-full">
                 {revealedCard ? (
-                  <img
-                    src={revealedCard.imageUrl}
-                    alt={
-                      revealedCard.name ||
-                      `BTC CLUB Card #${revealedCard.tokenId}`
-                    }
-                    className="absolute inset-0 h-full w-full object-contain drop-shadow-[0_32px_64px_rgba(0,0,0,0.68)]"
+                  <RevealedCardImage
+                    card={revealedCard}
                   />
                 ) : (
                   <Image
