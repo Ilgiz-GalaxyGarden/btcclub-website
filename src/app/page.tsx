@@ -1,8 +1,18 @@
-import Image from "next/image";
+"use client";
 
-import MintPanel from "@/components/mint/MintPanel";
+/* eslint-disable @next/next/no-img-element */
+
+import Image from "next/image";
+import { useState } from "react";
+
+import MintPanel, {
+  type RevealedCard,
+} from "@/components/mint/MintPanel";
 
 export default function Home() {
+  const [revealedCard, setRevealedCard] =
+    useState<RevealedCard | null>(null);
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-black text-white">
       {/* Desktop background */}
@@ -136,10 +146,10 @@ export default function Home() {
             </p>
 
             {/* Production mint panel */}
-            <MintPanel />
+            <MintPanel onReveal={setRevealedCard} />
           </div>
 
-          {/* Mystery card */}
+          {/* Mystery / revealed card */}
           <div className="order-1 flex items-center justify-center md:order-2 md:justify-end">
             <div className="relative flex w-full max-w-[315px] items-center justify-center sm:max-w-[430px] lg:max-w-[510px] xl:max-w-[560px]">
               {/* Back glow */}
@@ -158,14 +168,25 @@ export default function Home() {
 
               {/* Card */}
               <div className="relative aspect-square w-full">
-                <Image
-                  src="/mint/mystery-card-master.png"
-                  alt="BTC CLUB mystery collectible card"
-                  fill
-                  priority
-                  sizes="(max-width: 767px) 315px, (max-width: 1279px) 510px, 560px"
-                  className="object-contain drop-shadow-[0_32px_64px_rgba(0,0,0,0.68)]"
-                />
+                {revealedCard ? (
+                  <img
+                    src={revealedCard.imageUrl}
+                    alt={
+                      revealedCard.name ||
+                      `BTC CLUB Card #${revealedCard.tokenId}`
+                    }
+                    className="absolute inset-0 h-full w-full object-contain drop-shadow-[0_32px_64px_rgba(0,0,0,0.68)]"
+                  />
+                ) : (
+                  <Image
+                    src="/mint/mystery-card-master.png"
+                    alt="BTC CLUB mystery collectible card"
+                    fill
+                    priority
+                    sizes="(max-width: 767px) 315px, (max-width: 1279px) 510px, 560px"
+                    className="object-contain drop-shadow-[0_32px_64px_rgba(0,0,0,0.68)]"
+                  />
+                )}
 
                 <Image
                   src="/ui/glass-overlay-master.png"

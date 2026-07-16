@@ -3,11 +3,18 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { formatEther, type Abi, type Hash } from "viem";
+import {
+  decodeEventLog,
+  formatEther,
+  parseAbiItem,
+  type Abi,
+  type Hash,
+} from "viem";
 import {
   useAccount,
   useChainId,
   useConnect,
+  usePublicClient,
   useReadContract,
   useSwitchChain,
   useWaitForTransactionReceipt,
@@ -21,6 +28,52 @@ import {
 } from "@/lib/contract";
 
 const contractAbi = BTC_CLUB_ABI as Abi;
+
+const mysteryMintRequestedEvent = parseAbiItem(
+  "event MysteryMintRequested(uint256 indexed mintId, uint256 indexed requestId, address indexed buyer, uint256 payment)",
+);
+
+const mysteryMintCompletedEvent = parseAbiItem(
+  "event MysteryMintCompleted(uint256 indexed mintId, uint256 indexed requestId, address indexed buyer, uint256 tokenId)",
+);
+
+export type RevealedCard = {
+  tokenId: number;
+  imageUrl: string;
+  name?: string;
+};
+
+type MintPanelProps = {
+  onReveal?: (card: RevealedCard | null) => void;
+};
+
+type PendingMint = {
+  mintId: bigint;
+  fromBlock: bigint;
+};
+
+type NftMetadata = {
+  name?: string;
+  image?: string;
+};
+
+function ipfsToHttp(uri: string): string {
+  if (uri.startsWith("ipfs://ipfs/")) {
+    return uri.replace(
+      "ipfs://ipfs/",
+      "https://ipfs.io/ipfs/",
+    );
+  }
+
+  if (uri.startsWith("ipfs://")) {
+    return uri.replace(
+      "ipfs://",
+      "https://ipfs.io/ipfs/",
+    );
+  }
+
+  return uri;
+}
 
 function getErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -59,15 +112,27 @@ function getErrorMessage(error: unknown): string {
   return "Transaction failed. Please try again.";
 }
 
-export default function MintPanel() {
+export default function MintPanel({
+  onReveal,
+}: MintPanelProps) {
   const [transactionHash, setTransactionHash] =
     useState<Hash | undefined>();
+
+  const [pendingMint, setPendingMint] =
+    useState<PendingMint | null>(null);
+
+  const [revealedTokenId, setRevealedTokenId] =
+    useState<number | null>(null);
 
   const [actionError, setActionError] =
     useState<string | null>(null);
 
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+
+  const publicClient = usePublicClient({
+    chainId: BTC_CLUB_CHAIN_ID,
+  });
 
   const {
     connectAsync,
@@ -171,6 +236,213 @@ export default function MintPanel() {
     },
   });
 
+  /*
+   * После подтверждения mint-транзакции находим mintId
+   * в событии MysteryMintRequested.
+   */
+  useEffect(() => {
+    if (
+      !receiptQuery.isSuccess ||
+      !receiptQuery.data ||
+      pendingMint !== null ||
+      revealedTokenId !== null
+    ) {
+      return;
+    }
+
+    for (const log of receiptQuery.data.logs) {
+      if (
+        log.address.toLowerCase() !==
+        BTC_CLUB_CONTRACT_ADDRESS.toLowerCase()
+      ) {
+        continue;
+      }
+
+      try {
+        const decoded = decodeEventLog({
+          abi: [mysteryMintRequestedEvent],
+          data: log.data,
+          topics: log.topics,
+          strict: true,
+        });
+
+        if (
+          decoded.eventName !==
+          "MysteryMintRequested"
+        ) {
+          continue;
+        }
+
+        setPendingMint({
+          mintId: decoded.args.mintId,
+          fromBlock: receiptQuery.data.blockNumber,
+        });
+
+        return;
+      } catch {
+        // Лог относится к другому событию.
+      }
+    }
+
+    setActionError(
+      "Mint confirmed, but the reveal request could not be identified.",
+    );
+  }, [
+    receiptQuery.isSuccess,
+    receiptQuery.data,
+    pendingMint,
+    revealedTokenId,
+  ]);
+
+  /*
+   * Пока VRF не завершён, каждые 4 секунды проверяем появление
+   * MysteryMintCompleted для текущего mintId и кошелька.
+   */
+  useEffect(() => {
+    if (
+      pendingMint === null ||
+      !publicClient ||
+      !address
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let requestRunning = false;
+
+    const checkReveal = async () => {
+      if (cancelled || requestRunning) {
+        return;
+      }
+
+      requestRunning = true;
+
+      try {
+        const logs = await publicClient.getLogs({
+          address: BTC_CLUB_CONTRACT_ADDRESS,
+          event: mysteryMintCompletedEvent,
+          args: {
+            mintId: pendingMint.mintId,
+            buyer: address,
+          },
+          fromBlock: pendingMint.fromBlock,
+          toBlock: "latest",
+        });
+
+        const completionLog =
+          logs.length > 0
+            ? logs[logs.length - 1]
+            : undefined;
+
+        if (!completionLog || cancelled) {
+          return;
+        }
+
+        const tokenIdBigInt =
+          completionLog.args.tokenId;
+
+        if (tokenIdBigInt === undefined) {
+          return;
+        }
+
+        const metadataUri =
+          await publicClient.readContract({
+            address: BTC_CLUB_CONTRACT_ADDRESS,
+            abi: contractAbi,
+            functionName: "uri",
+            args: [tokenIdBigInt],
+          });
+
+        if (typeof metadataUri !== "string") {
+          throw new Error(
+            "Invalid metadata URI returned by contract.",
+          );
+        }
+
+        const metadataResponse = await fetch(
+          ipfsToHttp(metadataUri),
+          {
+            cache: "no-store",
+          },
+        );
+
+        if (!metadataResponse.ok) {
+          throw new Error(
+            "Failed to load NFT metadata.",
+          );
+        }
+
+        const metadata =
+          (await metadataResponse.json()) as NftMetadata;
+
+        if (
+          typeof metadata.image !== "string" ||
+          metadata.image.length === 0
+        ) {
+          throw new Error(
+            "NFT metadata does not contain an image.",
+          );
+        }
+
+        const tokenId = Number(tokenIdBigInt);
+
+        if (
+          !Number.isSafeInteger(tokenId) ||
+          cancelled
+        ) {
+          return;
+        }
+
+        setRevealedTokenId(tokenId);
+
+        onReveal?.({
+          tokenId,
+          imageUrl: ipfsToHttp(metadata.image),
+          name: metadata.name,
+        });
+
+        setPendingMint(null);
+        setTransactionHash(undefined);
+        setActionError(null);
+
+        void totalMintedQuery.refetch();
+        void publicMintQuery.refetch();
+        void pausedQuery.refetch();
+        void mintPriceQuery.refetch();
+      } catch (error) {
+        console.error(
+          "Reveal check failed:",
+          error,
+        );
+      } finally {
+        requestRunning = false;
+      }
+    };
+
+    void checkReveal();
+
+    const intervalId = window.setInterval(
+      () => {
+        void checkReveal();
+      },
+      4_000,
+    );
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    pendingMint,
+    publicClient,
+    address,
+    onReveal,
+    totalMintedQuery,
+    publicMintQuery,
+    pausedQuery,
+    mintPriceQuery,
+  ]);
+
   useEffect(() => {
     if (!receiptQuery.isSuccess) {
       return;
@@ -195,11 +467,16 @@ export default function MintPanel() {
     totalMintedQuery.isLoading ||
     maxTotalSupplyQuery.isLoading;
 
+  const isWaitingForReveal =
+    receiptQuery.isSuccess &&
+    revealedTokenId === null;
+
   const isTransactionBusy =
     isConnecting ||
     isSwitchingChain ||
     isWaitingForWallet ||
-    receiptQuery.isLoading;
+    receiptQuery.isLoading ||
+    isWaitingForReveal;
 
   const mintPriceEth = useMemo(() => {
     if (mintPriceWei === undefined) {
@@ -256,7 +533,7 @@ export default function MintPanel() {
       return "CONFIRMING MINT";
     }
 
-    if (receiptQuery.isSuccess) {
+    if (isWaitingForReveal) {
       return "MINT REQUESTED";
     }
 
@@ -318,6 +595,15 @@ export default function MintPanel() {
         return;
       }
 
+      /*
+       * Новый mint снова показывает закрытую Club Card,
+       * пока Chainlink VRF не завершит reveal.
+       */
+      setPendingMint(null);
+      setRevealedTokenId(null);
+      setTransactionHash(undefined);
+      onReveal?.(null);
+
       const hash = await writeContractAsync({
         address: BTC_CLUB_CONTRACT_ADDRESS,
         abi: contractAbi,
@@ -342,7 +628,11 @@ export default function MintPanel() {
       return "Mint transaction failed.";
     }
 
-    if (receiptQuery.isSuccess) {
+    if (revealedTokenId !== null) {
+      return `REVEAL COMPLETE · CARD #${revealedTokenId}`;
+    }
+
+    if (isWaitingForReveal) {
       return "Transaction confirmed. Waiting for Chainlink VRF reveal.";
     }
 
@@ -469,7 +759,9 @@ export default function MintPanel() {
           className={`relative z-10 mt-3 px-1 text-center text-[8px] font-medium tracking-[0.1em] sm:mt-4 sm:text-left sm:text-[10px] sm:tracking-[0.15em] ${
             actionError || receiptQuery.isError
               ? "text-red-300/80"
-              : "text-white/45"
+              : revealedTokenId !== null
+                ? "text-[#ead28a]"
+                : "text-white/45"
           }`}
         >
           {statusText}
