@@ -29,7 +29,7 @@ export default function Footer() {
 
             <li>
               <a
-                href="https://opensea.io/collection/btc-club-galaxy"
+                href="https://opensea.io/collection/btc-club-galaxys"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[#d8b15a] transition-all duration-300 hover:text-[#f5d98b] hover:drop-shadow-[0_0_6px_rgba(212,175,55,0.45)]"
